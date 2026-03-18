@@ -5,6 +5,11 @@ import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
+  MANUAL_TASK_WEBHOOK_HOST,
+  MANUAL_TASK_WEBHOOK_PATH,
+  MANUAL_TASK_WEBHOOK_PORT,
+  MANUAL_TASK_ROUTING_CONFIG_PATH,
+  MANUAL_TASK_WEBHOOK_SECRET,
   POLL_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
@@ -51,6 +56,8 @@ import {
   startRemoteControl,
   stopRemoteControl,
 } from './remote-control.js';
+import { maybeHandleOmsManualTaskCommand } from './integrations/c2cloud/oms-manual-task-command.js';
+import { startManualTaskWebhookServer } from './integrations/c2cloud/manual-task-webhook.js';
 import {
   isSenderAllowed,
   isTriggerAllowed,
@@ -482,11 +489,27 @@ async function main(): Promise<void> {
     CREDENTIAL_PROXY_PORT,
     PROXY_BIND_HOST,
   );
+  const manualTaskWebhookServer = startManualTaskWebhookServer({
+    port: MANUAL_TASK_WEBHOOK_PORT,
+    host: MANUAL_TASK_WEBHOOK_HOST,
+    path: MANUAL_TASK_WEBHOOK_PATH,
+    secret: MANUAL_TASK_WEBHOOK_SECRET || undefined,
+    routeConfigPath: MANUAL_TASK_ROUTING_CONFIG_PATH,
+    registeredGroups: () => registeredGroups,
+    sendMessage: async (jid, text) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) {
+        throw new Error(`No channel for JID: ${jid}`);
+      }
+      await channel.sendMessage(jid, text);
+    },
+  });
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     proxyServer.close();
+    manualTaskWebhookServer.close();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
@@ -544,6 +567,25 @@ async function main(): Promise<void> {
       if (trimmed === '/remote-control' || trimmed === '/remote-control-end') {
         handleRemoteControl(trimmed, chatJid, msg).catch((err) =>
           logger.error({ err, chatJid }, 'Remote control command error'),
+        );
+        return;
+      }
+
+      const group = registeredGroups[chatJid];
+      if (trimmed.startsWith('/oms-task')) {
+        maybeHandleOmsManualTaskCommand({
+          chatJid,
+          message: msg,
+          isMainGroup: group?.isMain === true,
+          sendMessage: async (jid, text) => {
+            const channel = findChannel(channels, jid);
+            if (!channel) {
+              throw new Error(`No channel for JID: ${jid}`);
+            }
+            await channel.sendMessage(jid, text);
+          },
+        }).catch((err) =>
+          logger.error({ err, chatJid }, 'OMS task command error'),
         );
         return;
       }

@@ -6,7 +6,11 @@ import { readEnvFile } from './env.js';
 // Read config values from .env (falls back to process.env).
 // Secrets (API keys, tokens) are NOT read here — they are loaded only
 // by the credential proxy (credential-proxy.ts), never exposed to containers.
-const envConfig = readEnvFile(['ASSISTANT_NAME', 'ASSISTANT_HAS_OWN_NUMBER']);
+const envConfig = readEnvFile([
+  'ASSISTANT_NAME',
+  'ASSISTANT_HAS_OWN_NUMBER',
+  'MANUAL_TASK_ROUTING_CONFIG_PATH',
+]);
 
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
@@ -71,3 +75,18 @@ export const TRIGGER_PATTERN = new RegExp(
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+export const MANUAL_TASK_WEBHOOK_PORT = parseInt(
+  process.env.MANUAL_TASK_WEBHOOK_PORT || '32111',
+  10,
+);
+export const MANUAL_TASK_WEBHOOK_HOST =
+  process.env.MANUAL_TASK_WEBHOOK_HOST || '127.0.0.1';
+export const MANUAL_TASK_WEBHOOK_PATH =
+  process.env.MANUAL_TASK_WEBHOOK_PATH || '/hooks/c2oms/manual-tasks';
+export const MANUAL_TASK_WEBHOOK_SECRET =
+  process.env.MANUAL_TASK_WEBHOOK_SECRET || '';
+export const MANUAL_TASK_ROUTING_CONFIG_PATH =
+  process.env.MANUAL_TASK_ROUTING_CONFIG_PATH ||
+  envConfig.MANUAL_TASK_ROUTING_CONFIG_PATH ||
+  path.join(HOME_DIR, '.config', 'nanoclaw', 'manual-task-routing.json');
