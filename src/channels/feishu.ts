@@ -53,10 +53,19 @@ export class FeishuChannel implements Channel {
     });
 
     return new Promise<void>((resolve, reject) => {
+      // Connection timeout: don't block forever if Feishu doesn't connect
+      const timeoutMs = 10000;
+      const timeout = setTimeout(() => {
+        logger.warn('Feishu connection timeout, continuing without WebSocket');
+        // Resolve anyway so other channels can start
+        resolve();
+      }, timeoutMs);
+
       // Use type assertion as the SDK types may not include all options
       const wsOptions: any = {
         eventDispatcher,
         onStart: () => {
+          clearTimeout(timeout);
           this.isConnectedFlag = true;
           logger.info('Feishu bot connected');
           console.log(`\n  Feishu bot connected (App ID: ${this.appId})`);
@@ -64,6 +73,7 @@ export class FeishuChannel implements Channel {
           resolve();
         },
         onError: (error: Error) => {
+          clearTimeout(timeout);
           logger.error({ err: error }, 'Feishu WebSocket error');
           reject(error);
         },
@@ -87,17 +97,41 @@ export class FeishuChannel implements Channel {
         sender,
         content: contentJson,
         msg_type: msgType,
+        message_type: messageType,
         create_time: createTime,
       } = message;
 
-      // Parse sender info
-      const senderId = sender?.sender_id?.open_id || sender?.id || 'unknown';
-      const senderType = sender?.sender_type || 'user';
+      // Use message_type as fallback (different Feishu API versions use different field names)
+      const actualMsgType = msgType || messageType;
+
+      // Parse sender info - handle different Feishu API formats
+      // Some message types have sender in 'mentions' array for group chats
+      let senderId = sender?.sender_id?.open_id || sender?.id;
+      let senderType = sender?.sender_type || 'user';
+
+      // If no sender info, try to extract from mentions (for some group message formats)
+      if (!senderId && message.mentions && Array.isArray(message.mentions)) {
+        const mention = message.mentions.find(
+          (m: any) => m.key === '@user' || m.name,
+        );
+        if (mention?.id?.open_id) {
+          senderId = mention.id.open_id;
+        }
+      }
+
+      // Final fallback
+      senderId = senderId || 'unknown';
 
       // Skip bot's own messages
       if (senderType === 'app') {
         return;
       }
+
+      // Debug: log message structure
+      logger.debug(
+        { msgType, contentJsonPreview: contentJson?.slice(0, 200) },
+        'Feishu message received',
+      );
 
       // Parse content based on message type
       let content = '';
@@ -106,19 +140,25 @@ export class FeishuChannel implements Channel {
       try {
         const parsedContent = JSON.parse(contentJson);
 
-        if (msgType === 'text') {
+        if (actualMsgType === 'text') {
           content = parsedContent.text || '';
-        } else if (msgType === 'post') {
+        } else if (actualMsgType === 'post') {
           // Rich text format - extract text content
           content = this.extractTextFromPost(parsedContent);
-        } else if (msgType === 'image') {
+        } else if (actualMsgType === 'image') {
           content = '[Image]';
-        } else if (msgType === 'file') {
+        } else if (actualMsgType === 'file') {
           content = `[File: ${parsedContent.file_name || 'unknown'}]`;
-        } else if (msgType === 'audio') {
+        } else if (actualMsgType === 'audio') {
           content = '[Audio/Voice message]';
+        } else if (actualMsgType) {
+          content = `[${actualMsgType} message]`;
         } else {
-          content = `[${msgType} message]`;
+          content = '[Unknown message type]';
+          logger.warn(
+            { messageKeys: Object.keys(message) },
+            'Feishu message missing msg_type',
+          );
         }
       } catch (e) {
         logger.debug(
@@ -130,21 +170,31 @@ export class FeishuChannel implements Channel {
 
       // Get sender name - try to fetch from API if possible
       let senderName = senderId;
-      try {
-        const userRes = await this.client!.contact.user.get({
-          params: {
-            user_id_type: 'open_id',
-          },
-          path: {
-            user_id: senderId,
-          },
-        });
-        if (userRes.data?.user?.name) {
-          senderName = userRes.data.user.name;
+      // Only try to fetch user info if we have a valid open_id (not 'unknown')
+      if (
+        senderId &&
+        senderId !== 'unknown' &&
+        !senderId.startsWith('unknown')
+      ) {
+        try {
+          const userRes = await this.client!.contact.user.get({
+            params: {
+              user_id_type: 'open_id',
+            },
+            path: {
+              user_id: senderId,
+            },
+          });
+          if (userRes.data?.user?.name) {
+            senderName = userRes.data.user.name;
+          }
+        } catch {
+          // Use sender ID as fallback
+          senderName = senderId.slice(0, 8);
         }
-      } catch {
-        // Use sender ID as fallback
-        senderName = senderId.slice(0, 8);
+      } else {
+        // Fallback for unknown senders
+        senderName = 'User';
       }
 
       // Get chat info
