@@ -1,0 +1,22 @@
+{
+  "defaultTarget": "main-groups",
+  "rules": [
+    {
+      "name": "tenant-1-approval-to-ops-review",
+      "tenantIds": ["1"],
+      "taskTypes": ["APPROVAL"],
+      "targetFolders": ["ops-review"]
+    },
+    {
+      "name": "completed-events-to-audit-room",
+      "eventTypes": ["oms:execution:ManualTask:Status:Completed"],
+      "targetJids": ["audit-room@g.us"]
+    },
+    {
+      "name": "review-events-for-tenant-2",
+      "tenantIds": ["2"],
+      "taskTypes": ["REVIEW"],
+      "targetFolders": ["review-team"]
+    }
+  ]
+}
