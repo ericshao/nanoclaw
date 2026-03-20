@@ -169,11 +169,19 @@ export class OmsManualTaskClient {
     }
 
     const url = `${this.baseUrl}${pathname}`;
-    const response = await fetch(url, {
-      ...init,
-      headers,
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...init,
+        headers,
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Failed to reach OMS manual task API at ${url}: ${message}`,
+      );
+    }
 
     if (!response.ok) {
       const body = await response.text();

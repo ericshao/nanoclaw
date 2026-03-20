@@ -56,13 +56,36 @@ export function startManualTaskWebhookServer(
         );
       }
 
-      await Promise.all(
-        targetJids.map((jid) => options.sendMessage(jid, message)),
+      const deliveryResults = await Promise.all(
+        targetJids.map(async (jid) => {
+          try {
+            await options.sendMessage(jid, message);
+            return { jid, ok: true as const };
+          } catch (error) {
+            logger.warn(
+              { err: error, jid },
+              'Manual task webhook delivery failed for target',
+            );
+            return {
+              jid,
+              ok: false as const,
+              error: getErrorMessage(error),
+            };
+          }
+        }),
       );
+
+      const deliveredTargets = deliveryResults
+        .filter((item) => item.ok)
+        .map((item) => item.jid);
+      const failedTargets = deliveryResults
+        .filter((item) => !item.ok)
+        .map((item) => ({ jid: item.jid, error: item.error }));
 
       respond(res, 200, {
         ok: true,
-        delivered: targetJids.length,
+        delivered: deliveredTargets.length,
+        failedTargets,
         digest: buildDigest(payload),
       });
     } catch (error) {

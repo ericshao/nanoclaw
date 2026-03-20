@@ -1,6 +1,14 @@
 ---
 name: add-feishu
-description: Add Feishu (Lark) as a channel. Can replace other channels entirely or run alongside them. Uses WebSocket long connection (no public URL needed).
+description: |
+  Add Feishu (Lark) channel integration to NanoClaw. Use this skill when the user wants to:
+  - Add Feishu/Lark as a messaging channel
+  - Configure Feishu bot integration
+  - Set up飞书机器人
+  - Add Chinese enterprise messaging support
+  - Enable Feishu group chat or private message support
+
+  Feishu uses WebSocket long connection (no public URL needed) and can run alongside other channels like Discord, Slack, or Telegram.
 ---
 
 # Add Feishu Channel
@@ -108,6 +116,21 @@ mkdir -p data/env && cp .env data/env/env
 
 The container reads environment from `data/env/env`, not `.env` directly.
 
+### Validate configuration
+
+Before restarting, verify the configuration:
+
+```bash
+# Check if credentials are set
+grep -E "FEISHU_(APP_ID|APP_SECRET)" .env data/env/env 2>/dev/null
+
+# Verify the Feishu channel file exists
+ls -la src/channels/feishu.ts
+
+# Check if import is in the channel index
+grep "feishu" src/channels/index.ts
+```
+
 ### Build and restart
 
 ```bash
@@ -115,6 +138,21 @@ npm run build
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
 # Linux: systemctl --user restart nanoclaw
 ```
+
+### Post-restart verification
+
+After restart, verify Feishu is connected:
+
+```bash
+# Check if Feishu WebSocket connected
+tail -20 logs/nanoclaw.log | grep -E "(Feishu|ws client ready)"
+
+# Check running processes
+launchctl list | grep nanoclaw  # macOS
+# systemctl --user status nanoclaw  # Linux
+```
+
+You should see `ws client ready` in the logs, indicating the Feishu WebSocket is connected.
 
 ## Phase 4: Registration
 
@@ -188,6 +226,27 @@ Check:
 3. Verify the bot has been added to the group chat
 4. Check that the app has the required OAuth scopes
 5. Try republishing the app after permission changes
+6. Check network connectivity to Feishu servers (some networks may block Feishu APIs)
+
+### Messages received but no reply sent
+
+If you see "Feishu message stored" in logs but no reply:
+
+1. **Check agent response**: Look for agent output in logs
+   ```bash
+   tail -f logs/nanoclaw.log | grep -E "(Agent output|Feishu message sent)"
+   ```
+
+2. **Check container logs** for API errors:
+   ```bash
+   tail -f groups/<folder>/logs/container-*.log
+   ```
+
+3. **Common API errors**:
+   - `Invalid ids: [unknown]` - Sender ID parsing issue. Check `src/channels/feishu.ts` sender handling.
+   - `message missing msg_type` - Message type field mismatch. Feishu API may use `message_type` instead of `msg_type`.
+
+4. **Verify credential proxy**: Ensure `ANTHROPIC_BASE_URL` is correctly set in `.env` if using a custom API endpoint
 
 ### Getting chat ID
 
@@ -195,6 +254,24 @@ If `/chatid` doesn't work:
 - Make sure the bot is in the conversation
 - Check bot logs for received messages: `tail -f logs/nanoclaw.log | grep Feishu`
 - You can find chat IDs in the Feishu developer console under **Logs & Monitoring** → **Event Logs**
+- Alternative: Check the SQLite database after receiving any message:
+  ```bash
+  sqlite3 store/messages.db "SELECT DISTINCT chat_jid FROM messages WHERE chat_jid LIKE 'feishu:%'"
+  ```
+
+### Connection timeout issues
+
+If you see `Connect Timeout Error (attempted address: discord.com:443)`:
+- This is Discord channel trying to connect, not Feishu
+- Feishu uses WebSocket on `open.feishu.cn` or `open.larksuite.com`
+- Check if your network blocks outbound WebSocket connections
+
+### Message type warnings
+
+If logs show `Feishu message missing msg_type`:
+- This is a non-fatal warning
+- Some Feishu message formats use `message_type` instead of `msg_type`
+- The channel handles both formats automatically in recent versions
 
 ## After Setup
 

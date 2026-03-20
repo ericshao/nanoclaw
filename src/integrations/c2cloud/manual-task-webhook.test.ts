@@ -156,4 +156,68 @@ describe('startManualTaskWebhookServer', () => {
     });
     fs.unlinkSync(configPath);
   });
+
+  it('reports failed targets without failing the webhook response', async () => {
+    const sendMessage = vi
+      .fn()
+      .mockRejectedValue(new Error('No channel for JID: dc:stale'));
+    const server = startManualTaskWebhookServer({
+      port: 0,
+      path: '/hooks/c2oms/manual-tasks',
+      secret: 'secret',
+      registeredGroups: () => ({
+        'dc:stale': {
+          name: 'stale-discord-main',
+          folder: 'main',
+          trigger: '@Andy',
+          added_at: new Date().toISOString(),
+          isMain: true,
+        },
+      }),
+      sendMessage,
+    });
+
+    const port = await getListeningPort(server);
+
+    const response = await fetch(
+      `http://127.0.0.1:${port}/hooks/c2oms/manual-tasks`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-nanoclaw-secret': 'secret',
+        },
+        body: JSON.stringify({
+          subject: '新人工任务',
+          variables: {
+            eventType: 'oms:execution:ManualTask:Lifecycle:Created',
+            task: {
+              uid: 'mrt_3',
+              title: '审批订单',
+            },
+          },
+        }),
+      },
+    );
+
+    const payload = (await response.json()) as {
+      ok: boolean;
+      delivered: number;
+      failedTargets: Array<{ jid: string; error: string }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(payload.ok).toBe(true);
+    expect(payload.delivered).toBe(0);
+    expect(payload.failedTargets).toEqual([
+      {
+        jid: 'dc:stale',
+        error: 'No channel for JID: dc:stale',
+      },
+    ]);
+
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+  });
 });
